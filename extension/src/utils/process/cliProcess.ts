@@ -5,7 +5,7 @@ import { AspireTerminalProvider } from "../../utils/AspireTerminalProvider";
 import { CmdShimSpawnCommand, getCmdShimSpawnCommand, shouldWrapWithCmd } from "../../utils/cmdShim";
 import * as readline from 'readline';
 import * as vscode from 'vscode';
-import { EnvironmentVariables } from "../../utils/environment";
+import { configureDebugTimeoutEnvironment, EnvironmentVariables } from "../../utils/environment";
 
 const processShutdownGracePeriodMs = 5_000;
 const managedPosixProcessGroups = new WeakSet<ChildProcessWithoutNullStreams>();
@@ -36,7 +36,8 @@ export function getCliSpawnCommand(command: string, args?: string[]): CliSpawnCo
 
 export function getCliSpawnDiagnostics(command: string, args: string[] | undefined, workingDirectory: string, noDebug: boolean | undefined, debugSessionId: string | undefined, env: Record<string, string | undefined>): string {
     const startupTimeout = getEnvironmentValue(env, EnvironmentVariables.ASPIRE_CLI_START_TIMEOUT);
-    return `Spawning Aspire CLI process: ${[command, ...redactCliSpawnArgs(args)].join(' ')}; cwd=${workingDirectory}; noDebug=${noDebug}; debugSessionId=${debugSessionId}; ${EnvironmentVariables.ASPIRE_CLI_START_TIMEOUT}=${startupTimeout}`;
+    const backchannelTimeout = getEnvironmentValue(env, EnvironmentVariables.ASPIRE_CLI_BACKCHANNEL_CONNECT_TIMEOUT_SECONDS);
+    return `Spawning Aspire CLI process: ${[command, ...redactCliSpawnArgs(args)].join(' ')}; cwd=${workingDirectory}; noDebug=${noDebug}; debugSessionId=${debugSessionId}; ${EnvironmentVariables.ASPIRE_CLI_START_TIMEOUT}=${startupTimeout}; ${EnvironmentVariables.ASPIRE_CLI_BACKCHANNEL_CONNECT_TIMEOUT_SECONDS}=${backchannelTimeout}`;
 }
 
 export function mergeCliSpawnEnvironment(env: Record<string, string | undefined>, envVars?: EnvVar[]): void {
@@ -62,8 +63,17 @@ export function spawnCliProcess(terminalProvider: AspireTerminalProvider, comman
     const env: Record<string, string | undefined> = {};
     const spawnCommand = getCliSpawnCommand(command, args);
 
-    Object.assign(env, terminalProvider.createEnvironment(options?.debugSessionId, options?.noDebug, options?.noExtensionVariables));
+    Object.assign(env, terminalProvider.createEnvironment(
+        options?.debugSessionId,
+        options?.noDebug,
+        options?.noExtensionVariables,
+        { deferDebugTimeoutConfiguration: true }));
     mergeCliSpawnEnvironment(env, options?.env);
+    if (options?.debugSessionId) {
+        // Apply defaults after caller environment variables are merged so an explicit launch
+        // configuration controls both the effective startup timeout and its legacy fallback.
+        configureDebugTimeoutEnvironment(env, options.noDebug);
+    }
 
     extensionLogOutputChannel.info(getCliSpawnDiagnostics(spawnCommand.command, spawnCommand.diagnosticArgs ?? spawnCommand.args, workingDirectory, options?.noDebug, options?.debugSessionId, env));
 

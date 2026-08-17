@@ -4,6 +4,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { pathToFileURL } = require('url');
 const { spawn, spawnSync } = require('child_process');
 const {
   ensureDownloadCache,
@@ -867,11 +868,13 @@ function verifyExtesterFeed() {
 // ExTester does not expose a supported way to open VS Code with a workspace
 // folder. Starting with the workspace already open avoids a slower control-bridge
 // reload path and removes a startup race where discovery begins in an empty window.
+// ChromeDriver prefixes positional arguments with "--", so use VS Code's folder URI
+// switch rather than a raw path that would become an invalid "--c:\..." argument.
 // Remove this patch when ExTester exposes a stable launch option for a folder/workspace.
 function patchExtesterLaunchLocale() {
   const browserPath = path.join(extesterModule, 'out', 'browser.js');
   const source = fs.readFileSync(browserPath, 'utf8');
-  const workspaceArgument = JSON.stringify(workspaceRoot);
+  const workspaceArgument = JSON.stringify(`--folder-uri=${pathToFileURL(workspaceRoot).href}`);
   const targets = [
     "const args = ['--no-sandbox', '--disable-dev-shm-usage', '--lang=en-US', '--disable-keytar', '--use-inmemory-secretstorage', '--password-store=basic', '--disable-extension', 'vscode.github-authentication', '--disable-extension', 'vscode.microsoft-authentication', `--user-data-dir=${path.join(this.storagePath, 'settings')}`];",
     "const args = ['--no-sandbox', '--disable-dev-shm-usage', '--lang=en-US', '--use-inmemory-secretstorage', '--password-store=basic', '--disable-extension', 'vscode.github-authentication', '--disable-extension', 'vscode.microsoft-authentication', `--user-data-dir=${path.join(this.storagePath, 'settings')}`];",
@@ -894,7 +897,7 @@ function patchExtesterLaunchLocale() {
     console.log('Patching ExTester VS Code launch arguments by fallback argument-line match.');
     fs.writeFileSync(browserPath, source.replace(argsDeclarationPattern, () => replacement));
   } else {
-    throw new Error(`Unable to patch ExTester VS Code launch arguments in ${browserPath} to force the E2E browser locale.`);
+    throw new Error(`Unable to patch ExTester VS Code launch arguments in ${browserPath} to force the E2E browser locale and workspace.`);
   }
 }
 
@@ -980,9 +983,18 @@ ${azureFunctionsPackageReference}  </ItemGroup>
   const azureFunctionsResource = includeAzureFunctions
     ? `\nbuilder.AddAzureFunctionsProject("e2e-functions", "../AspireE2E.Functions/AspireE2E.Functions.csproj");\n`
     : '';
+  const terminalResource = compareConcreteVersions(resolvedAppHostSdkVersion.split('-')[0], '13.6.0') >= 0
+    ? `// e2e-terminal opts into WithTerminal so the real CLI surfaces terminal.enabled and
+// terminal.replicaIndex over the backchannel. The extension's Open terminal action reads
+// those properties, so this resource exercises that metadata flowing through a real CLI process.
+builder.AddProject<Projects.AspireE2E_Worker>("e2e-terminal")
+    .WithHttpEndpoint(name: "http")
+    .WithTerminal();`
+    : `builder.AddProject<Projects.AspireE2E_Worker>("e2e-terminal")
+    .WithHttpEndpoint(name: "http");`;
   fs.writeFileSync(path.join(projectDirectory, 'AppHost.cs'), `${csharpFileHeader}#pragma warning disable ASPIREINTERACTION001
 #pragma warning disable ASPIRETERMINAL001
-// The E2E fixture intentionally covers interaction command arguments and terminal metadata while those APIs are still experimental.
+// The E2E fixture intentionally covers experimental interaction command arguments and, when supported, terminal metadata.
 var builder = DistributedApplication.CreateBuilder(args);
 
 builder.AddProject<Projects.AspireE2E_Worker>("e2e-worker")
@@ -1051,12 +1063,7 @@ builder.AddProject<Projects.AspireE2E_Worker>("e2e-worker")
 
 builder.AddResource(new NoCommandsResource("e2e-no-commands"));
 
-// e2e-terminal opts into WithTerminal so the real CLI surfaces terminal.enabled and
-// terminal.replicaIndex over the backchannel. The extension's Open terminal action reads
-// those properties, so this resource exercises that metadata flowing through a real CLI process.
-builder.AddProject<Projects.AspireE2E_Worker>("e2e-terminal")
-    .WithHttpEndpoint(name: "http")
-    .WithTerminal();
+${terminalResource}
 ${azureFunctionsResource}
 
 builder.Build().Run();

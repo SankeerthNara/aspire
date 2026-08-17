@@ -634,12 +634,18 @@ suite('AspireTerminalProvider tests', () => {
     suite('createEnvironment', () => {
         let originalStartupTimeout: string | undefined;
         let originalLowercaseStartupTimeout: string | undefined;
+        let originalBackchannelTimeout: string | undefined;
+        let originalLowercaseBackchannelTimeout: string | undefined;
 
         setup(() => {
             originalStartupTimeout = process.env[EnvironmentVariables.ASPIRE_CLI_START_TIMEOUT];
             originalLowercaseStartupTimeout = process.env.aspire_cli_start_timeout;
+            originalBackchannelTimeout = process.env[EnvironmentVariables.ASPIRE_CLI_BACKCHANNEL_CONNECT_TIMEOUT_SECONDS];
+            originalLowercaseBackchannelTimeout = process.env.aspire_cli_backchannel_connect_timeout_seconds;
             delete process.env[EnvironmentVariables.ASPIRE_CLI_START_TIMEOUT];
             delete process.env.aspire_cli_start_timeout;
+            delete process.env[EnvironmentVariables.ASPIRE_CLI_BACKCHANNEL_CONNECT_TIMEOUT_SECONDS];
+            delete process.env.aspire_cli_backchannel_connect_timeout_seconds;
 
             terminalProvider.rpcServerConnectionInfo = {
                 address: 'http://localhost:1234',
@@ -656,6 +662,8 @@ suite('AspireTerminalProvider tests', () => {
         teardown(() => {
             restoreEnvironmentVariable(EnvironmentVariables.ASPIRE_CLI_START_TIMEOUT, originalStartupTimeout);
             restoreEnvironmentVariable('aspire_cli_start_timeout', originalLowercaseStartupTimeout);
+            restoreEnvironmentVariable(EnvironmentVariables.ASPIRE_CLI_BACKCHANNEL_CONNECT_TIMEOUT_SECONDS, originalBackchannelTimeout);
+            restoreEnvironmentVariable('aspire_cli_backchannel_connect_timeout_seconds', originalLowercaseBackchannelTimeout);
         });
 
         test('marks extension-managed debug sessions as non-interactive without disabling extension prompts', () => {
@@ -666,19 +674,21 @@ suite('AspireTerminalProvider tests', () => {
             assert.strictEqual(env.ASPIRE_NON_INTERACTIVE, 'true');
         });
 
-        test('uses a longer AppHost startup timeout for extension-managed debug sessions', () => {
+        test('uses longer AppHost startup and backchannel timeouts for extension-managed debug sessions', () => {
             const env = terminalProvider.createEnvironment('debug-session-id', false);
 
             assert.strictEqual(env.ASPIRE_CLI_START_TIMEOUT, '86400');
+            assert.strictEqual(env.ASPIRE_CLI_BACKCHANNEL_CONNECT_TIMEOUT_SECONDS, '86400');
         });
 
-        test('does not change the AppHost startup timeout for extension-managed run sessions', () => {
+        test('does not change AppHost startup or backchannel timeouts for extension-managed run sessions', () => {
             const env = terminalProvider.createEnvironment('debug-session-id', true);
 
             assert.strictEqual(env.ASPIRE_CLI_START_TIMEOUT, undefined);
+            assert.strictEqual(env.ASPIRE_CLI_BACKCHANNEL_CONNECT_TIMEOUT_SECONDS, undefined);
         });
 
-        test('keeps an explicitly configured AppHost startup timeout for extension-managed debug sessions', () => {
+        test('uses an explicitly configured AppHost startup timeout for the legacy backchannel timeout', () => {
             const originalStartupTimeout = process.env[EnvironmentVariables.ASPIRE_CLI_START_TIMEOUT];
             process.env[EnvironmentVariables.ASPIRE_CLI_START_TIMEOUT] = '300';
 
@@ -686,13 +696,14 @@ suite('AspireTerminalProvider tests', () => {
                 const env = terminalProvider.createEnvironment('debug-session-id', false);
 
                 assert.strictEqual(env.ASPIRE_CLI_START_TIMEOUT, '300');
+                assert.strictEqual(env.ASPIRE_CLI_BACKCHANNEL_CONNECT_TIMEOUT_SECONDS, '300');
             }
             finally {
                 restoreEnvironmentVariable(EnvironmentVariables.ASPIRE_CLI_START_TIMEOUT, originalStartupTimeout);
             }
         });
 
-        test('keeps an explicitly configured AppHost startup timeout with different casing on Windows', () => {
+        test('uses an explicitly configured AppHost startup timeout with different casing for the legacy backchannel timeout on Windows', () => {
             const platformStub = sinon.stub(process, 'platform').value('win32');
             process.env.aspire_cli_start_timeout = '300';
 
@@ -701,6 +712,32 @@ suite('AspireTerminalProvider tests', () => {
 
                 assert.strictEqual(env.ASPIRE_CLI_START_TIMEOUT, undefined);
                 assert.strictEqual(env.aspire_cli_start_timeout, '300');
+                assert.strictEqual(env.ASPIRE_CLI_BACKCHANNEL_CONNECT_TIMEOUT_SECONDS, '300');
+            }
+            finally {
+                platformStub.restore();
+            }
+        });
+
+        test('keeps an explicitly configured legacy backchannel timeout for extension-managed debug sessions', () => {
+            process.env[EnvironmentVariables.ASPIRE_CLI_BACKCHANNEL_CONNECT_TIMEOUT_SECONDS] = '45';
+
+            const env = terminalProvider.createEnvironment('debug-session-id', false);
+
+            assert.strictEqual(env.ASPIRE_CLI_START_TIMEOUT, '86400');
+            assert.strictEqual(env.ASPIRE_CLI_BACKCHANNEL_CONNECT_TIMEOUT_SECONDS, '45');
+        });
+
+        test('keeps an explicitly configured legacy backchannel timeout with different casing on Windows', () => {
+            const platformStub = sinon.stub(process, 'platform').value('win32');
+            process.env.aspire_cli_backchannel_connect_timeout_seconds = '45';
+
+            try {
+                const env = terminalProvider.createEnvironment('debug-session-id', false);
+
+                assert.strictEqual(env.ASPIRE_CLI_START_TIMEOUT, '86400');
+                assert.strictEqual(env.ASPIRE_CLI_BACKCHANNEL_CONNECT_TIMEOUT_SECONDS, undefined);
+                assert.strictEqual(env.aspire_cli_backchannel_connect_timeout_seconds, '45');
             }
             finally {
                 platformStub.restore();
@@ -734,6 +771,7 @@ suite('AspireTerminalProvider tests', () => {
             assert.strictEqual(env.DEBUG_SESSION_TOKEN, 'dcp-token');
             assert.strictEqual(env.DEBUG_SESSION_SERVER_CERTIFICATE, 'dcp-cert');
             assert.strictEqual(env.ASPIRE_CLI_START_TIMEOUT, '86400');
+            assert.strictEqual(env.ASPIRE_CLI_BACKCHANNEL_CONNECT_TIMEOUT_SECONDS, '86400');
             const debugSessionInfo = JSON.parse(env.DEBUG_SESSION_INFO);
             assert.deepStrictEqual(debugSessionInfo.protocols_supported, ['2024-03-03', '2024-04-23', '2025-10-01']);
             assert.ok(debugSessionInfo.supported_launch_configurations.includes('baseline.v1'));
@@ -747,6 +785,7 @@ suite('AspireTerminalProvider tests', () => {
             assert.strictEqual(env.ASPIRE_EXTENSION_DEBUG_SESSION_ID, undefined);
             assert.strictEqual(env.ASPIRE_EXTENSION_PROMPT_ENABLED, 'true');
             assert.strictEqual(env.ASPIRE_NON_INTERACTIVE, undefined);
+            assert.strictEqual(env.ASPIRE_CLI_BACKCHANNEL_CONNECT_TIMEOUT_SECONDS, undefined);
         });
 
         test('forwards an existing absolute aspireCliExecutablePath as AspireCliPath so MSBuild bundle resolution can pick it up', () => {

@@ -1,8 +1,8 @@
 import * as assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
-import { getCommandInvocationCount, waitForCommandOutcome, waitForDebugConsoleOutput, waitForDebugSessionStartup, waitForNoDebugSessions, waitForNoRunningAppHost, waitForRepositoryIdle, waitForWorkspaceAppHost } from './helpers/assertions';
-import { executeE2eControlCommand, restoreWorkspaceCliPath, runE2eTeardown, stopPrimaryAppHostIfRunning, writeFileWithRetry } from './helpers/fixtures';
+import { getCommandInvocationCount, isSamePath, waitForCommandOutcome, waitForDebugConsoleOutput, waitForDebugSessionStartup, waitForExtensionState, waitForNoDebugSessions, waitForNoRunningAppHost, waitForRepositoryIdle, waitForWorkspaceAppHost } from './helpers/assertions';
+import { executeE2eControlCommand, restoreE2eCliPathForE2E, restoreWorkspaceCliPath, runE2eTeardown, setE2eCliPathForE2E, stopPrimaryAppHostIfRunning, writeFileWithRetry, writeLegacyBackchannelTimeoutCliWrapper } from './helpers/fixtures';
 import { getPrimaryAppHostProjectPath, getRunRoot } from './helpers/paths';
 import { openAspireView } from './helpers/vscode';
 
@@ -18,6 +18,7 @@ suite('Aspire debug startup timeout E2E', function () {
         }
 
         await runE2eTeardown([
+            () => restoreE2eCliPathForE2E(),
             () => restoreWorkspaceCliPath(),
             () => executeE2eControlCommand({ name: 'stopDebugging' }),
             () => stopPrimaryAppHostIfRunning(),
@@ -37,8 +38,10 @@ suite('Aspire debug startup timeout E2E', function () {
         const appHostPath = discovered.state.workspaceAppHostPath ?? getPrimaryAppHostProjectPath();
         const appHostSourcePath = path.join(path.dirname(appHostPath), 'AppHost.cs');
         const originalSource = fs.readFileSync(appHostSourcePath, 'utf8');
+        const legacyCliWrapper = writeLegacyBackchannelTimeoutCliWrapper();
 
         try {
+            await setE2eCliPathForE2E(legacyCliWrapper.cliPath);
             const delayedSource = originalSource.replace(
                 'var builder = DistributedApplication.CreateBuilder(args);',
                 `System.Console.WriteLine("${delayStartMarker} " + System.DateTimeOffset.UtcNow.ToString("O"));\nSystem.Threading.Thread.Sleep(System.TimeSpan.FromSeconds(65));\nSystem.Console.WriteLine("${delayEndMarker} " + System.DateTimeOffset.UtcNow.ToString("O"));\nvar builder = DistributedApplication.CreateBuilder(args);`);
@@ -49,7 +52,18 @@ suite('Aspire debug startup timeout E2E', function () {
             await executeE2eControlCommand({ name: 'debugAppHost', appHostPath }, { waitFor: 'started' });
             await waitForCommandOutcome('aspire-vscode.debugAppHost', 'success', 60000, beforeDebug);
 
-            await waitForDebugSessionStartup(appHostPath, 240000);
+            await waitForExtensionState(
+                file => file.state.debugSessions.some(session => session.appHostPath !== undefined && isSamePath(session.appHostPath, appHostPath)),
+                'Aspire debug session to start',
+                60000);
+            await waitForStartupMarker(delayStartMarker, 120000);
+            await Promise.race([
+                waitForDebugSessionStartup(appHostPath, 120000),
+                waitForNoDebugSessions(120000).then(() => {
+                    throw new Error(
+                        `Aspire debug session terminated before startup completed. Timeout environment: ${JSON.stringify(readTimeoutEnvironmentEvidence(legacyCliWrapper.timeoutEnvironmentLogPath))}\nCLI logs:\n${readCliLogs()}`);
+                }),
+            ]);
             await waitForDebugConsoleOutput('/login?t=', appHostPath, 240000);
 
             const evidence = await waitForStartupDelayEvidence(delayStartMarker, delayEndMarker, 120000);
@@ -61,12 +75,19 @@ suite('Aspire debug startup timeout E2E', function () {
             const extensionLogs = readExtensionLogs();
             assert.ok(extensionLogs.includes('run --start-debug-session'), 'Expected extension logs to include the debug AppHost CLI launch.');
             assert.ok(extensionLogs.includes(`ASPIRE_CLI_START_TIMEOUT=${expectedTimeout}`), `Expected extension-spawned CLI to use ASPIRE_CLI_START_TIMEOUT=${expectedTimeout}.`);
+            assert.ok(extensionLogs.includes(`ASPIRE_CLI_BACKCHANNEL_CONNECT_TIMEOUT_SECONDS=${expectedTimeout}`), `Expected extension-spawned CLI to use ASPIRE_CLI_BACKCHANNEL_CONNECT_TIMEOUT_SECONDS=${expectedTimeout}.`);
+
+            const timeoutEnvironmentEvidence = readTimeoutEnvironmentEvidence(legacyCliWrapper.timeoutEnvironmentLogPath);
+            assert.deepStrictEqual(
+                timeoutEnvironmentEvidence.at(-1),
+                { startupTimeout: expectedTimeout, backchannelTimeout: expectedTimeout });
         }
         finally {
             await runE2eTeardown([
                 () => writeFileWithRetry(appHostSourcePath, originalSource),
                 () => executeE2eControlCommand({ name: 'stopDebugging' }),
                 () => waitForNoDebugSessions().catch(() => undefined),
+                () => restoreE2eCliPathForE2E(),
             ], 'Debug startup timeout AppHost source cleanup failed.');
         }
     });
@@ -74,6 +95,19 @@ suite('Aspire debug startup timeout E2E', function () {
 
 function shouldRunStartupTimeoutProof(): boolean {
     return process.env.ASPIRE_EXTENSION_E2E_UNSET_CLI_START_TIMEOUT === 'true';
+}
+
+async function waitForStartupMarker(marker: string, timeoutMs: number): Promise<void> {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+        if (tryGetMarkerTimestamp(readCliLogs(), marker) !== undefined) {
+            return;
+        }
+
+        await delay(500);
+    }
+
+    throw new Error(`Timed out after ${timeoutMs}ms waiting for CLI log marker '${marker}'. Last log content:\n${readCliLogs()}`);
 }
 
 async function waitForStartupDelayEvidence(startMarker: string, endMarker: string, timeoutMs: number): Promise<{ delayMs: number; logContent: string }> {
@@ -96,6 +130,17 @@ async function waitForStartupDelayEvidence(startMarker: string, endMarker: strin
     }
 
     throw new Error(`Timed out after ${timeoutMs}ms waiting for CLI log markers '${startMarker}' and '${endMarker}'. Last log content:\n${lastLogContent}`);
+}
+
+function readTimeoutEnvironmentEvidence(filePath: string): Array<{ startupTimeout?: string; backchannelTimeout?: string }> {
+    if (!fs.existsSync(filePath)) {
+        return [];
+    }
+
+    return fs.readFileSync(filePath, 'utf8')
+        .split(/\r?\n/)
+        .filter(line => line.length > 0)
+        .map(line => JSON.parse(line) as { startupTimeout?: string; backchannelTimeout?: string });
 }
 
 function readCliLogs(): string {

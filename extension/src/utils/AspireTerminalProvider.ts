@@ -5,7 +5,7 @@ import { extensionLogOutputChannel } from './logging';
 import { RpcServerConnectionInfo } from '../server/AspireRpcServer';
 import { DcpServerConnectionInfo } from '../dcp/types';
 import { getRunSessionInfo, getSupportedCapabilities } from '../capabilities';
-import { EnvironmentVariables, getEnvironmentWithoutE2EBridgeVariables } from './environment';
+import { configureDebugTimeoutEnvironment, EnvironmentVariables, getEnvironmentWithoutE2EBridgeVariables } from './environment';
 import { resolveCliPath } from './cliPath';
 import { ASPIRE_CLI_PATH_ENV_VAR, getForwardableAspireCliPath } from './cliPathEnvironment';
 import path from 'path';
@@ -28,6 +28,10 @@ export interface AspireTerminal {
 export interface SendAspireCommandOptions {
     redactAdditionalArgs?: boolean;
     terminalTarget?: 'shared' | 'editor';
+}
+
+interface CreateEnvironmentOptions {
+    deferDebugTimeoutConfiguration?: boolean;
 }
 
 // String parts are fixed CLI syntax and are validated before interpolation.
@@ -315,7 +319,7 @@ export class AspireTerminalProvider implements vscode.Disposable {
         return vscode.window.createTerminal(terminalOptions);
     }
 
-    createEnvironment(debugSessionId?: string, noDebug?: boolean, noExtensionVariables?: boolean): any {
+    createEnvironment(debugSessionId?: string, noDebug?: boolean, noExtensionVariables?: boolean, options?: CreateEnvironmentOptions): any {
         if (noExtensionVariables) {
             const env: any = {
                 ...getEnvironmentWithoutE2EBridgeVariables(),
@@ -356,6 +360,9 @@ export class AspireTerminalProvider implements vscode.Disposable {
 
         if (debugSessionId) {
             this.addDcpRunSessionEnvironment(env, debugSessionId, noDebug);
+            if (!options?.deferDebugTimeoutConfiguration) {
+                configureDebugTimeoutEnvironment(env, noDebug);
+            }
         }
 
         return env;
@@ -378,6 +385,7 @@ export class AspireTerminalProvider implements vscode.Disposable {
         delete env.ASPIRE_EXTENSION_CERT;
 
         this.addDcpRunSessionEnvironment(env, debugSessionId, noDebug);
+        configureDebugTimeoutEnvironment(env, noDebug);
 
         return env;
     }
@@ -394,14 +402,6 @@ export class AspireTerminalProvider implements vscode.Disposable {
         // through the extension backchannel while disabling Spectre live output
         // such as the first-run banner and spinners.
         env[EnvironmentVariables.ASPIRE_NON_INTERACTIVE] = 'true';
-
-        // While debugging, the developer can pause on a breakpoint (e.g. before builder.Build())
-        // for an arbitrarily long time. Use a very long startup timeout (86400s = 24h) so the parent
-        // Aspire CLI doesn't hit its normal ~120s startup timeout and tear down the debug session.
-        // An explicitly configured ASPIRE_CLI_START_TIMEOUT still wins.
-        if (noDebug === false && !hasConfiguredEnvironmentVariable(env, EnvironmentVariables.ASPIRE_CLI_START_TIMEOUT)) {
-            env[EnvironmentVariables.ASPIRE_CLI_START_TIMEOUT] = '86400';
-        }
 
         // if DCP debug logging is enabled, set DCP-specific logging environment variables
         const dcpDebugLoggingEnabled = vscode.workspace.getConfiguration('aspire').get<boolean>('enableAspireDcpDebugLogging', false);
@@ -506,20 +506,6 @@ function addForwardableAspireCliPath(env: Record<string, string | undefined>): v
     if (configuredCliPath) {
         env[ASPIRE_CLI_PATH_ENV_VAR] = configuredCliPath;
     }
-}
-
-function hasConfiguredEnvironmentVariable(env: Record<string, string | undefined>, name: string): boolean {
-    if (env[name]) {
-        return true;
-    }
-
-    if (process.platform !== 'win32') {
-        return false;
-    }
-
-    // Windows environment variables are case-insensitive. Avoid adding a second
-    // differently-cased key because Node picks only one when spawning the child process.
-    return Object.entries(env).some(([key, value]) => key.toUpperCase() === name && !!value);
 }
 
 function scrubNoExtensionVariablesEnvironment(env: Record<string, string | undefined>): void {

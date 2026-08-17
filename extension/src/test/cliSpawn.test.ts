@@ -402,7 +402,7 @@ suite('spawnCliProcess tests', () => {
         }
     });
 
-    test('formats final startup timeout when spawning CLI process', () => {
+    test('formats final startup and backchannel timeouts when spawning CLI process', () => {
         const message = getCliSpawnDiagnostics(
             '/usr/local/bin/aspire',
             ['run', '--apphost', '/workspace/AppHost.csproj'],
@@ -411,12 +411,13 @@ suite('spawnCliProcess tests', () => {
             'debug-session-id',
             {
                 [EnvironmentVariables.ASPIRE_CLI_START_TIMEOUT]: '86400',
+                [EnvironmentVariables.ASPIRE_CLI_BACKCHANNEL_CONNECT_TIMEOUT_SECONDS]: '86400',
                 ASPIRE_EXTENSION_TOKEN: 'secret-token',
             });
 
         assert.strictEqual(
             message,
-            'Spawning Aspire CLI process: /usr/local/bin/aspire run --apphost /workspace/AppHost.csproj; cwd=/workspace; noDebug=false; debugSessionId=debug-session-id; ASPIRE_CLI_START_TIMEOUT=86400');
+            'Spawning Aspire CLI process: /usr/local/bin/aspire run --apphost /workspace/AppHost.csproj; cwd=/workspace; noDebug=false; debugSessionId=debug-session-id; ASPIRE_CLI_START_TIMEOUT=86400; ASPIRE_CLI_BACKCHANNEL_CONNECT_TIMEOUT_SECONDS=86400');
         assert.strictEqual(message.includes('secret-token'), false);
     });
 
@@ -431,7 +432,7 @@ suite('spawnCliProcess tests', () => {
 
         assert.strictEqual(
             message,
-            'Spawning Aspire CLI process: /usr/local/bin/aspire resource database reset-password --load-arguments -- <redacted>; cwd=/workspace; noDebug=undefined; debugSessionId=undefined; ASPIRE_CLI_START_TIMEOUT=undefined');
+            'Spawning Aspire CLI process: /usr/local/bin/aspire resource database reset-password --load-arguments -- <redacted>; cwd=/workspace; noDebug=undefined; debugSessionId=undefined; ASPIRE_CLI_START_TIMEOUT=undefined; ASPIRE_CLI_BACKCHANNEL_CONNECT_TIMEOUT_SECONDS=undefined');
         assert.strictEqual(message.includes('s3cr3t'), false);
     });
 
@@ -452,6 +453,53 @@ suite('spawnCliProcess tests', () => {
         }
     });
 
+    test('derives the legacy backchannel timeout after merging the launch environment', () => {
+        const childProcess = createTestChildProcess(4646);
+        const spawnStub = sinon.stub(nodeChildProcess, 'spawn').returns(childProcess);
+        const terminalProvider = { createEnvironment: () => ({}) } as AspireTerminalProvider;
+
+        try {
+            spawnCliProcess(terminalProvider, '/usr/local/bin/aspire', ['run'], {
+                debugSessionId: 'debug-session-id',
+                noDebug: false,
+                env: [{ name: EnvironmentVariables.ASPIRE_CLI_START_TIMEOUT, value: '300' }],
+            });
+
+            assert.deepStrictEqual(spawnStub.firstCall.args[2]?.env, {
+                [EnvironmentVariables.ASPIRE_CLI_START_TIMEOUT]: '300',
+                [EnvironmentVariables.ASPIRE_CLI_BACKCHANNEL_CONNECT_TIMEOUT_SECONDS]: '300',
+            });
+        }
+        finally {
+            spawnStub.restore();
+        }
+    });
+
+    test('preserves an explicit legacy backchannel timeout from the launch environment', () => {
+        const childProcess = createTestChildProcess(4747);
+        const spawnStub = sinon.stub(nodeChildProcess, 'spawn').returns(childProcess);
+        const terminalProvider = { createEnvironment: () => ({}) } as AspireTerminalProvider;
+
+        try {
+            spawnCliProcess(terminalProvider, '/usr/local/bin/aspire', ['run'], {
+                debugSessionId: 'debug-session-id',
+                noDebug: false,
+                env: [
+                    { name: EnvironmentVariables.ASPIRE_CLI_START_TIMEOUT, value: '300' },
+                    { name: EnvironmentVariables.ASPIRE_CLI_BACKCHANNEL_CONNECT_TIMEOUT_SECONDS, value: '45' },
+                ],
+            });
+
+            assert.deepStrictEqual(spawnStub.firstCall.args[2]?.env, {
+                [EnvironmentVariables.ASPIRE_CLI_START_TIMEOUT]: '300',
+                [EnvironmentVariables.ASPIRE_CLI_BACKCHANNEL_CONNECT_TIMEOUT_SECONDS]: '45',
+            });
+        }
+        finally {
+            spawnStub.restore();
+        }
+    });
+
     test('formats startup timeout diagnostics case-insensitively on Windows', () => {
         const platformStub = sinon.stub(process, 'platform').value('win32');
 
@@ -464,11 +512,12 @@ suite('spawnCliProcess tests', () => {
                 'debug-session-id',
                 {
                     aspire_cli_start_timeout: '300',
+                    aspire_cli_backchannel_connect_timeout_seconds: '45',
                 });
 
             assert.strictEqual(
                 message,
-                'Spawning Aspire CLI process: C:\\Tools\\aspire.exe run; cwd=C:\\workspace; noDebug=false; debugSessionId=debug-session-id; ASPIRE_CLI_START_TIMEOUT=300');
+                'Spawning Aspire CLI process: C:\\Tools\\aspire.exe run; cwd=C:\\workspace; noDebug=false; debugSessionId=debug-session-id; ASPIRE_CLI_START_TIMEOUT=300; ASPIRE_CLI_BACKCHANNEL_CONNECT_TIMEOUT_SECONDS=45');
         }
         finally {
             platformStub.restore();

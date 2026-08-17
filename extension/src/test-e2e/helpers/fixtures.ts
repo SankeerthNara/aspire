@@ -228,6 +228,26 @@ export function writeConfigInfoUnsupportedCliWrapper(name = 'aspire-no-config-in
     });
 }
 
+export function writeLegacyBackchannelTimeoutCliWrapper(): { cliPath: string; timeoutEnvironmentLogPath: string } {
+    const timeoutEnvironmentLogPath = path.join(getWorkspaceRoot(), '.e2e-cli-wrappers', 'legacy-backchannel-timeout-environment.log');
+    const runRoot = getRunRoot();
+    if (!runRoot) {
+        throw new Error('ASPIRE_EXTENSION_E2E_RUN_ROOT is required to isolate legacy CLI logs.');
+    }
+    const cliLogFilePath = path.join(runRoot, 'aspire-home', 'logs', 'legacy-backchannel-timeout-cli.log');
+    fs.mkdirSync(path.dirname(cliLogFilePath), { recursive: true });
+    removePath(timeoutEnvironmentLogPath, { force: true });
+    removePath(cliLogFilePath, { force: true });
+
+    return {
+        cliPath: writeCliWrapper('aspire-legacy-backchannel-timeout', {
+            legacyBackchannelTimeoutEnvironmentLogPath: timeoutEnvironmentLogPath,
+            cliLogFilePath,
+        }),
+        timeoutEnvironmentLogPath,
+    };
+}
+
 export function writeStreamingDiscoveryCliWrapper(delayMs = 5_000, initialDelayMs = 1_500): string {
     return writeCliWrapper('aspire-streaming-discovery', {
         configInfoJson: createConfigInfo([lsJsonStreamCapability]),
@@ -799,6 +819,8 @@ function writeCliWrapper(
         psSnapshotReleaseFilePath?: string;
         psSnapshotAppHostPath?: string;
         psSnapshotAppHostPid?: number;
+        legacyBackchannelTimeoutEnvironmentLogPath?: string;
+        cliLogFilePath?: string;
     },
 ): string {
     const wrapperDirectory = path.join(getWorkspaceRoot(), '.e2e-cli-wrappers');
@@ -811,7 +833,33 @@ const fs = require('fs');
 const path = require('path');
 const realCli = ${JSON.stringify(getCliPath())};
 const args = process.argv.slice(2);
+let forwardedArgs = args;
+${options.legacyBackchannelTimeoutEnvironmentLogPath === undefined ? '' : 'let legacyBackchannelTimeoutMs;'}
 ${options.invocationLogPath === undefined ? '' : `fs.appendFileSync(${JSON.stringify(options.invocationLogPath)}, JSON.stringify(args) + '\\n');`}
+${options.legacyBackchannelTimeoutEnvironmentLogPath === undefined ? '' : `
+if (args[0] === 'run' && args.includes('--start-debug-session')) {
+  const findEnvironmentKey = name => Object.keys(process.env).find(key => key.toUpperCase() === name);
+  const startupTimeoutKey = findEnvironmentKey('ASPIRE_CLI_START_TIMEOUT');
+  const backchannelTimeoutKey = findEnvironmentKey('ASPIRE_CLI_BACKCHANNEL_CONNECT_TIMEOUT_SECONDS');
+  const startupTimeout = startupTimeoutKey ? process.env[startupTimeoutKey] : undefined;
+  const backchannelTimeout = backchannelTimeoutKey ? process.env[backchannelTimeoutKey] : undefined;
+  fs.appendFileSync(${JSON.stringify(options.legacyBackchannelTimeoutEnvironmentLogPath)}, JSON.stringify({ startupTimeout, backchannelTimeout }) + '\\n');
+
+  // Aspire 13.3.5 uses ASPIRE_CLI_BACKCHANNEL_CONNECT_TIMEOUT_SECONDS when present and
+  // otherwise waits 60 seconds. Current CLIs no longer apply that deadline once the AppHost
+  // process has spawned, so the wrapper enforces it while retaining all other current behavior.
+  const parsedBackchannelTimeoutSeconds = Number(backchannelTimeout ?? '60');
+  const backchannelTimeoutSeconds = Number.isFinite(parsedBackchannelTimeoutSeconds) && parsedBackchannelTimeoutSeconds >= 0
+    ? parsedBackchannelTimeoutSeconds
+    : 60;
+  legacyBackchannelTimeoutMs = backchannelTimeoutSeconds * 1000;
+  forwardedArgs = [...args, '--log-file', ${JSON.stringify(options.cliLogFilePath)}];
+
+  if (!backchannelTimeout) {
+    process.env.ASPIRE_CLI_BACKCHANNEL_CONNECT_TIMEOUT_SECONDS = '60';
+  }
+}
+`}
 
 function waitForReleaseFile(filePath, description) {
   const deadline = Date.now() + 120000;
@@ -870,7 +918,7 @@ ${options.psSnapshotReleaseFilePath === undefined ? '' : `  waitForReleaseFile($
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ${options.psSnapshotDelayMs ?? 0});
 ${options.psSnapshotAppHostPath === undefined || options.psSnapshotAppHostPid === undefined
         ? ''
-        : `    const result = spawnSync(realCli, args, {
+        : `    const result = spawnSync(realCli, forwardedArgs, {
       cwd: process.cwd(),
       env: process.env,
       encoding: 'utf8',
@@ -918,11 +966,12 @@ ${options.psSnapshotAppHostPath === undefined || options.psSnapshotAppHostPid ==
   }
 }
 
-const result = spawnSync(realCli, args, {
+const result = spawnSync(realCli, forwardedArgs, {
   cwd: process.cwd(),
   env: process.env,
   stdio: 'inherit',
   shell: false,
+${options.legacyBackchannelTimeoutEnvironmentLogPath === undefined ? '' : '  timeout: legacyBackchannelTimeoutMs,\n'}
 });
 
 if (result.error) {
