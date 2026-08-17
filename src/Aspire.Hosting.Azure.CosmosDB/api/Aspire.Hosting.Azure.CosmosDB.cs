@@ -51,10 +51,10 @@ namespace Aspire.Hosting
         [AspireExport]
         public static ApplicationModel.IResourceBuilder<AzureCosmosDBResource> AddAzureCosmosDB(this IDistributedApplicationBuilder builder, string name) { throw null; }
 
-        [AspireExportIgnore(Reason = "Polyglot app hosts use the internal addContainer dispatcher export.")]
+        [AspireExportIgnore(Reason = "Polyglot AppHosts use the internal addContainer dispatcher export.")]
         public static ApplicationModel.IResourceBuilder<Azure.AzureCosmosDBContainerResource> AddContainer(this ApplicationModel.IResourceBuilder<Azure.AzureCosmosDBDatabaseResource> builder, string name, System.Collections.Generic.IEnumerable<string> partitionKeyPaths, string? containerName = null) { throw null; }
 
-        [AspireExportIgnore(Reason = "Polyglot app hosts use the internal addContainer dispatcher export.")]
+        [AspireExportIgnore(Reason = "Polyglot AppHosts use the internal addContainer dispatcher export.")]
         public static ApplicationModel.IResourceBuilder<Azure.AzureCosmosDBContainerResource> AddContainer(this ApplicationModel.IResourceBuilder<Azure.AzureCosmosDBDatabaseResource> builder, string name, string partitionKeyPath, string? containerName = null) { throw null; }
 
         [AspireExport]
@@ -71,10 +71,10 @@ namespace Aspire.Hosting
         [System.Diagnostics.CodeAnalysis.Experimental("ASPIRECOSMOSDB001", UrlFormat = "https://aka.ms/aspire/diagnostics/{0}")]
         public static ApplicationModel.IResourceBuilder<AzureCosmosDBResource> RunAsPreviewEmulator(this ApplicationModel.IResourceBuilder<AzureCosmosDBResource> builder, System.Action<ApplicationModel.IResourceBuilder<Azure.AzureCosmosDBEmulatorResource>>? configureContainer = null) { throw null; }
 
-        [AspireExportIgnore(Reason = "Polyglot app hosts use the internal withAccessKeyAuthentication dispatcher export.")]
+        [AspireExportIgnore(Reason = "Polyglot AppHosts use the internal withAccessKeyAuthentication dispatcher export.")]
         public static ApplicationModel.IResourceBuilder<AzureCosmosDBResource> WithAccessKeyAuthentication(this ApplicationModel.IResourceBuilder<AzureCosmosDBResource> builder, ApplicationModel.IResourceBuilder<Azure.IAzureKeyVaultResource> keyVaultBuilder) { throw null; }
 
-        [AspireExportIgnore(Reason = "Polyglot app hosts use the internal withAccessKeyAuthentication dispatcher export.")]
+        [AspireExportIgnore(Reason = "Polyglot AppHosts use the internal withAccessKeyAuthentication dispatcher export.")]
         public static ApplicationModel.IResourceBuilder<AzureCosmosDBResource> WithAccessKeyAuthentication(this ApplicationModel.IResourceBuilder<AzureCosmosDBResource> builder) { throw null; }
 
         [AspireExport]
