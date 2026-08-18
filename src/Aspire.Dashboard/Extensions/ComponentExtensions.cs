@@ -12,7 +12,7 @@ internal static class ComponentExtensions
     {
         if (dataGrid != null)
         {
-            await dataGrid.RefreshDataAsync().ConfigureAwait(false);
+            await dataGrid.RefreshDataAsync(force: true).ConfigureAwait(false);
         }
     }
 

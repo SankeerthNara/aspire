@@ -6,7 +6,7 @@
 <div class="span-details-layout">
     @if (!HideToolbar)
     {
-        <FluentToolbar Orientation="Orientation.Horizontal">
+        <div class="details-toolbar" role="toolbar">
             <div>
                 @Loc[nameof(ControlsStrings.SpanDetailsResourceLabel)] <strong>@ViewModel.Span.Source.Resource.ResourceName</strong>
             </div>
@@ -23,25 +23,29 @@
                 }
                 @Loc[nameof(ControlsStrings.SpanDetailsStartTimeLabel)] <strong>@formattedStartTime</strong>
             </div>
-            <FluentSearch Placeholder="@Loc[nameof(ControlsStrings.FilterPlaceholder)]"
-                          Immediate="true"
-                          Autofocus="true"
-                          AutoComplete="off"
-                          @bind-Value="_filter"
-                          slot="end" />
-            <FluentDivider slot="end" Role="DividerRole.Presentation" Orientation="Orientation.Vertical" />
-            <AspireMenuButton ButtonAppearance="Appearance.Lightweight"
-                              Icon="@(new Icons.Regular.Size20.Options())"
-                              ItemsProvider="@(() => _spanActionsMenuItems)"
-                              Title="@Loc[nameof(ControlsStrings.ActionsButtonText)]"
-                              slot="end" />
-        </FluentToolbar>
+            <div class="toolbar-end">
+                <FluentTextInput TextInputType="TextInputType.Search" Placeholder="@Loc[nameof(ControlsStrings.FilterPlaceholder)]"
+                              Immediate="true"
+                              Autofocus="true"
+                              AutoComplete="off"
+                              @bind-Value="_filter">
+                    <StartTemplate>
+                        <FluentIcon Value="@(new Icons.Regular.Size16.Search())" Color="Color.Primary" />
+                    </StartTemplate>
+                </FluentTextInput>
+                <FluentDivider Role="DividerRole.Presentation" Orientation="Orientation.Vertical" />
+                <AspireMenuButton ButtonAppearance="ButtonAppearance.Transparent"
+                                  Icon="@(new Icons.Regular.Size20.Options())"
+                                  ItemsProvider="@(() => _spanActionsMenuItems)"
+                                  Title="@Loc[nameof(ControlsStrings.ActionsButtonText)]" />
+            </div>
+        </div>
     }
     <div class="property-grid-container">
         <FluentAccordion>
             <FluentAccordionItem Heading="@Loc[nameof(ControlsStrings.SpanDetailsSpanHeader)]" Expanded="true">
                 <div slot="end">
-                    <FluentBadge Appearance="Appearance.Neutral" Circular="true">
+                    <FluentBadge Appearance="BadgeAppearance.Tint" Circular="true">
                         @FilteredItems.Count()
                     </FluentBadge>
                 </div>
@@ -53,7 +57,7 @@
             </FluentAccordionItem>
             <FluentAccordionItem Heading="@Loc[nameof(ControlsStrings.SpanDetailsContextHeader)]" Expanded="true">
                 <div slot="end">
-                    <FluentBadge Appearance="Appearance.Neutral" Circular="true">
+                    <FluentBadge Appearance="BadgeAppearance.Tint" Circular="true">
                         @FilteredContextItems.Count()
                     </FluentBadge>
                 </div>
@@ -65,7 +69,7 @@
             </FluentAccordionItem>
             <FluentAccordionItem Heading="@Loc[nameof(ControlsStrings.SpanDetailsResourceHeader)]" Expanded="true">
                 <div slot="end">
-                    <FluentBadge Appearance="Appearance.Neutral" Circular="true">
+                    <FluentBadge Appearance="BadgeAppearance.Tint" Circular="true">
                         @FilteredResourceItems.Count()
                     </FluentBadge>
                 </div>
@@ -77,7 +81,7 @@
             </FluentAccordionItem>
             <FluentAccordionItem Heading="@Loc[nameof(ControlsStrings.SpanDetailsEventsHeader)]" Expanded="@_isSpanEventsExpanded">
                 <div slot="end">
-                    <FluentBadge Appearance="Appearance.Neutral" Circular="true">
+                    <FluentBadge Appearance="BadgeAppearance.Tint" Circular="true">
                         @FilteredSpanEvents.Count()
                     </FluentBadge>
                 </div>
@@ -98,19 +102,18 @@
                                           GridTemplateColumns="1fr 2fr"
                                           IsNameSortable="false"
                                           IsValueSortable="false"
-                                          GenerateHeader="GenerateHeaderOption.Default" />
+                                          GenerateHeader="DataGridGeneratedHeaderType.Default" />
                         }
                     </ExtraValueContent>
                 </PropertyGrid>
             </FluentAccordionItem>
             <FluentAccordionItem Heading="@Loc[nameof(ControlsStrings.SpanDetailsLinksHeader)]" Expanded="@_isSpanLinksExpanded">
                 <div slot="end">
-                    <FluentBadge Appearance="Appearance.Neutral" Circular="true">
+                    <FluentBadge Appearance="BadgeAppearance.Tint" Circular="true">
                         @FilteredSpanLinks.Count()
                     </FluentBadge>
                 </div>
-                <FluentDataGrid ColumnResizeLabels="@_resizeLabels"
-                                ColumnSortLabels="@_sortLabels"
+                <FluentDataGrid
                                 HeaderCellAsButtonWithMenu="true"
                                 ResizeType="DataGridResizeType.Discrete"
                                 ResizableColumns="true"
@@ -125,7 +128,7 @@
                         @WriteSpanLink(context)
                     </TemplateColumn>
                     <TemplateColumn Title="@Loc[nameof(ControlsStrings.SpanDetailsDetailsColumnHeader)]">
-                        <FluentButton OnClick="@(() => OnViewDetailsAsync(context))" Appearance="Appearance.Lightweight" Class="button-hyperlink" IconStart="new Icons.Regular.Size16.GanttChart()">
+                        <FluentButton OnClick="@(() => OnViewDetailsAsync(context))" Appearance="ButtonAppearance.Transparent" Class="button-hyperlink" IconStart="new Icons.Regular.Size16.GanttChart()">
                             @OtlpHelpers.ToShortenedId(context.SpanId)
                         </FluentButton>
                     </TemplateColumn>
@@ -133,12 +136,11 @@
             </FluentAccordionItem>
             <FluentAccordionItem Heading="@Loc[nameof(ControlsStrings.SpanDetailsBacklinksHeader)]" Expanded="@_isSpanBacklinksExpanded">
                 <div slot="end">
-                    <FluentBadge Appearance="Appearance.Neutral" Circular="true">
+                    <FluentBadge Appearance="BadgeAppearance.Tint" Circular="true">
                         @FilteredSpanBacklinks.Count()
                     </FluentBadge>
                 </div>
-                <FluentDataGrid ColumnResizeLabels="@_resizeLabels"
-                                ColumnSortLabels="@_sortLabels"
+                <FluentDataGrid
                                 HeaderCellAsButtonWithMenu="true"
                                 ResizeType="DataGridResizeType.Discrete"
                                 ResizableColumns="true"
@@ -153,7 +155,7 @@
                         @WriteSpanLink(context)
                     </TemplateColumn>
                     <TemplateColumn Title="@Loc[nameof(ControlsStrings.SpanDetailsDetailsColumnHeader)]">
-                        <FluentButton OnClick="@(() => OnViewDetailsAsync(context))" Appearance="Appearance.Lightweight" Class="button-hyperlink" IconStart="new Icons.Regular.Size16.GanttChart()">
+                        <FluentButton OnClick="@(() => OnViewDetailsAsync(context))" Appearance="ButtonAppearance.Transparent" Class="button-hyperlink" IconStart="new Icons.Regular.Size16.GanttChart()">
                             @OtlpHelpers.ToShortenedId(context.SpanId)
                         </FluentButton>
                     </TemplateColumn>
@@ -186,7 +188,7 @@
                           GridTemplateColumns="1fr 2fr"
                           IsNameSortable="false"
                           IsValueSortable="false"
-                          GenerateHeader="GenerateHeaderOption.Default" />
+                          GenerateHeader="DataGridGeneratedHeaderType.Default" />
         }
     </div>;
     }

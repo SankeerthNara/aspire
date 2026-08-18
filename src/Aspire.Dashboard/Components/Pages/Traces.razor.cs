@@ -45,9 +45,6 @@ public partial class Traces : IComponentWithTelemetry, IPageWithSessionAndUrlSta
     private FluentDataGrid<OtlpTrace> _dataGrid = null!;
     private GridColumnManager _manager = null!;
 
-    private ColumnResizeLabels _resizeLabels = ColumnResizeLabels.Default;
-    private ColumnSortLabels _sortLabels = ColumnSortLabels.Default;
-
     public string SessionStorageKey => BrowserStorageKeys.TracesPageState;
     public string BasePath => DashboardUrls.TracesBasePath;
     public TracesPageViewModel PageViewModel { get; set; } = null!;
@@ -71,7 +68,7 @@ public partial class Traces : IComponentWithTelemetry, IPageWithSessionAndUrlSta
     public required IOptions<DashboardOptions> DashboardOptions { get; init; }
 
     [Inject]
-    public required IMessageService MessageService { get; init; }
+    public required DashboardMessageBarService MessageService { get; init; }
 
     [Inject]
     public required ILogger<Traces> Logger { get; init; }
@@ -147,7 +144,7 @@ public partial class Traces : IComponentWithTelemetry, IPageWithSessionAndUrlSta
         else if (!traces.IsFull && TelemetryRepository.MaxTraceLimitMessage is { } message)
         {
             // Telemetry could have been cleared from the dashboard. Automatically remove full message on data update.
-            message.Close();
+            await message.CloseAsync();
         }
 
         // Updating the total item count as a field doesn't work because it isn't updated with the grid.
@@ -161,8 +158,6 @@ public partial class Traces : IComponentWithTelemetry, IPageWithSessionAndUrlSta
     protected override void OnInitialized()
     {
         TelemetryContextProvider.Initialize(TelemetryContext);
-
-        (_resizeLabels, _sortLabels) = DashboardUIHelpers.CreateGridLabels(ControlsStringsLoc);
 
         _gridColumns = [
             new GridColumn(Name: TimestampColumn, DesktopWidth: "0.8fr", MobileWidth: "0.8fr"),
@@ -363,7 +358,7 @@ public partial class Traces : IComponentWithTelemetry, IPageWithSessionAndUrlSta
 
     private async Task HandleFilterDialog(DialogResult result)
     {
-        if (result.Data is FilterDialogResult filterResult && filterResult.Filter is FieldTelemetryFilter filter)
+        if (result.Value is FilterDialogResult filterResult && filterResult.Filter is FieldTelemetryFilter filter)
         {
             if (filterResult.Delete)
             {

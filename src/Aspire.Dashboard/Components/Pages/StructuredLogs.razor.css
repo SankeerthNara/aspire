@@ -35,8 +35,14 @@
     grid-area: toolbar;
 }
 
+::deep .main-toolbar.filter-toolbar {
+    grid-area: toolbar;
+}
+
 ::deep .logs-summary-layout > .logs-grid-container {
     grid-area: main;
+    min-width: 0;
+    min-height: 0;
     overflow: auto;
 }
 
