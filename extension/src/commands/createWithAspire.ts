@@ -5,29 +5,15 @@ import {
     createNewAspireAppDescription,
     createNewAspireAppLabel,
     createWithAspirePlaceholder,
+    errorMessage,
 } from '../loc/strings';
-import { type HandledCommandOutcome } from '../utils/telemetry';
-import type { AspireEditorCommandProvider } from '../editor/AspireEditorCommandProvider';
+import { type HandledCommandOutcome, isCommandCancellation } from '../utils/telemetry';
+import type { AppHostDiscoveryService } from '../utils/appHostDiscovery';
+import { extensionLogOutputChannel } from '../utils/logging';
+import { selectCommandTarget } from '../utils/workspace';
 
 interface CreateWithAspireItem extends vscode.QuickPickItem {
     readonly command: 'aspire-vscode.new' | 'aspire-vscode.init';
-}
-
-/**
- * True when every open workspace folder already has an AppHost, meaning
- * "Add Aspire to this workspace" (aspire init) has nothing left to
- * initialize. An empty workspace (no folders open) is never considered
- * fully set up, since init is still the applicable next step once a folder
- * is opened.
- */
-async function workspaceFoldersAllHaveAppHost(editorCommandProvider: AspireEditorCommandProvider): Promise<boolean> {
-    const folders = vscode.workspace.workspaceFolders;
-    if (!folders || folders.length === 0) {
-        return false;
-    }
-
-    const appHostPaths = await Promise.all(folders.map(folder => editorCommandProvider.getAppHostPath(folder.uri)));
-    return appHostPaths.every(appHostPath => appHostPath !== null);
 }
 
 /**
@@ -35,13 +21,33 @@ async function workspaceFoldersAllHaveAppHost(editorCommandProvider: AspireEdito
  * existing creation workflows (aspire new / aspire init) using outcome-oriented
  * language rather than requiring the user to already know the CLI command names,
  * then delegates to the corresponding command so the CLI invocation, target
- * resolution, and telemetry stay owned by a single implementation.
- *
- * "Add Aspire to this workspace" is omitted once every workspace folder
- * already contains an AppHost, since offering to initialize Aspire again
- * would be a no-op.
+ * resolution, and telemetry stay owned by a single implementation. Initialization
+ * is restricted to folders with no AppHost candidates, even when existing
+ * candidates are unbuildable or have no selected default.
  */
-export async function createWithAspireCommand(editorCommandProvider: AspireEditorCommandProvider): Promise<HandledCommandOutcome | undefined> {
+export async function createWithAspireCommand(appHostDiscoveryService: AppHostDiscoveryService): Promise<HandledCommandOutcome | undefined> {
+    const folders = vscode.workspace.workspaceFolders ?? [];
+    const discoveryResults = await Promise.allSettled(folders.map(folder => appHostDiscoveryService.discover(folder)));
+    const eligibleFolders: vscode.WorkspaceFolder[] = [];
+    for (const [index, result] of discoveryResults.entries()) {
+        if (result.status === 'rejected') {
+            const error: unknown = result.reason;
+            if (isCommandCancellation(error)) {
+                throw error;
+            }
+
+            // Failed discovery is not evidence that a folder has no AppHost.
+            extensionLogOutputChannel.warn(`Failed to discover AppHost candidates for workspace ${folders[index].uri.fsPath}: ${error}`);
+        }
+        else if (result.value.length === 0) {
+            eligibleFolders.push(folders[index]);
+        }
+    }
+    const failedDiscovery = discoveryResults.find(result => result.status === 'rejected');
+    if (failedDiscovery?.status === 'rejected') {
+        void vscode.window.showErrorMessage(errorMessage(failedDiscovery.reason));
+    }
+
     const items: CreateWithAspireItem[] = [
         {
             label: createNewAspireAppLabel,
@@ -50,7 +56,7 @@ export async function createWithAspireCommand(editorCommandProvider: AspireEdito
         },
     ];
 
-    if (!(await workspaceFoldersAllHaveAppHost(editorCommandProvider))) {
+    if (folders.length === 0 || eligibleFolders.length > 0) {
         items.push({
             label: addAspireToWorkspaceLabel,
             detail: addAspireToWorkspaceDescription,
@@ -70,5 +76,6 @@ export async function createWithAspireCommand(editorCommandProvider: AspireEdito
         return vscode.commands.executeCommand<HandledCommandOutcome | undefined>(selected.command, 'tree');
     }
 
-    return vscode.commands.executeCommand<HandledCommandOutcome | undefined>(selected.command, undefined, 'tree');
+    const target = await selectCommandTarget(eligibleFolders);
+    return vscode.commands.executeCommand<HandledCommandOutcome | undefined>(selected.command, target, 'tree');
 }

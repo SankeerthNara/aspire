@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 import type { AspireExtensionE2EControlCommand, AspireExtensionE2EControlStatus } from '../../types/extensionApi';
+import type { CandidateAppHostDisplayInfo } from '../../utils/appHostCandidateTypes';
 import {
     lsJsonStreamCapability,
     type ConfigInfo,
@@ -257,6 +258,15 @@ export function removePrimaryAppHostFixture(): void {
 export function writeBaselineActionCliWrapper(name = 'aspire-baseline-actions'): string {
     return writeCliWrapper(name, {
         configInfoJson: createConfigInfo(),
+    });
+}
+
+export function writeInitTargetProofCliWrapper(name: string, invocationLogPath: string): string {
+    removePath(invocationLogPath, { force: true });
+    return writeCliWrapper(name, {
+        configInfoJson: createConfigInfo(),
+        lsCandidates: [],
+        initInvocationLogPath: invocationLogPath,
     });
 }
 
@@ -941,6 +951,7 @@ function writeCliWrapper(
         configInfoJson?: unknown;
         configInfoExitCode?: number;
         configInfoStderr?: string;
+        lsCandidates?: readonly CandidateAppHostDisplayInfo[];
         streamedLsCandidate?: unknown;
         streamedLsDelayMs?: number;
         streamedLsInitialDelayMs?: number;
@@ -951,6 +962,7 @@ function writeCliWrapper(
         deployRequestFilePath?: string;
         deployReleaseFilePath?: string;
         invocationLogPath?: string;
+        initInvocationLogPath?: string;
         psSnapshotDelayMs?: number;
         psSnapshotRequestFilePath?: string;
         psSnapshotReleaseFilePath?: string;
@@ -1006,6 +1018,29 @@ ${options.configInfoJson === undefined
   process.exit(0);`}
 }
 
+${options.initInvocationLogPath === undefined
+        ? ''
+        : `if (args[0] === 'init') {
+  fs.writeFileSync(${JSON.stringify(options.initInvocationLogPath)}, JSON.stringify({ cwd: process.cwd(), args }));
+  process.exit(0);
+}
+
+`}
+${options.lsCandidates === undefined
+        ? ''
+        : `if (args[0] === 'ls') {
+  const candidates = ${JSON.stringify(options.lsCandidates)};
+  if (args.includes('--stream')) {
+    for (const candidate of candidates) {
+      console.log(JSON.stringify(candidate));
+    }
+  } else {
+    console.log(JSON.stringify(candidates));
+  }
+  process.exit(0);
+}
+
+`}
 ${options.deployReleaseFilePath === undefined
         ? ''
         : `// The extension keeps a durable deploy operation in flight until this process exits, so
