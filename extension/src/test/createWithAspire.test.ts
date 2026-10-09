@@ -120,9 +120,10 @@ suite('createWithAspireCommand', () => {
                 language: candidate.language,
                 status: candidate.status,
             })));
-            const provider = new AspireEditorCommandProvider(discovery, new AppHostLaunchService({
+            const launchService = new AppHostLaunchService({
                 getCapabilityStatus: async () => 'supported',
-            }));
+            });
+            const provider = new AspireEditorCommandProvider(discovery, launchService);
             showQuickPickStub.callsFake(async (items: { command: string }[]) => items.find(item => item.command === 'aspire-vscode.new'));
 
             try {
@@ -135,6 +136,7 @@ suite('createWithAspireCommand', () => {
             }
             finally {
                 provider.dispose();
+                launchService.dispose();
             }
         });
     }

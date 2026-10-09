@@ -73,10 +73,14 @@ suite('Aspire workspace discovery and configuration E2E', function () {
         await executeE2eControlCommand(
             { name: 'executeAspireCommand', commandId: 'aspire-vscode.createWithAspire' },
             { waitFor: 'started' });
-        await waitForActiveInput('Choose how to set up Aspire');
-        assert.deepStrictEqual(await getActiveQuickPickLabels(), ['Create a new Aspire app']);
-        await cancelActiveInput();
-        await waitForCommandOutcome('aspire-vscode.createWithAspire', 'canceled', 60000, before);
+        try {
+            await waitForActiveInput('Choose how to set up Aspire');
+            assert.deepStrictEqual(await getActiveQuickPickLabels(), ['Create a new Aspire app']);
+        }
+        finally {
+            await cancelActiveInput();
+            await waitForCommandOutcome('aspire-vscode.createWithAspire', 'canceled', 60000, before);
+        }
     }
 
     test('handles malformed, JSONC, absolute, and legacy AppHost configuration files', async () => {
