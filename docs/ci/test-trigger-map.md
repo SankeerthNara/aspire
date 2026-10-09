@@ -9,6 +9,22 @@ The machine-readable form lives at
 the rollout plan are in
 [`test-trigger-selector-design.md`](./test-trigger-selector-design.md).
 
+To inspect the authoritative computed result for a local change set, run
+`SelectTests` with `--explain` and either `--changed-files` or `--from`:
+
+```bash
+dotnet run --project tools/SelectTests -- --changed-files changed-files.txt --explain
+```
+
+The output is produced by the same selector used in CI and includes the selected
+projects, jobs, causes, unattributed files, and fallback status. Do not infer a
+target set by reading the YAML; use this command (or the CI artifact) instead.
+`--skip-layer1` is useful for focused Layer 2 tests, but is not an authoritative
+PR result because it omits the MSBuild dependency graph.
+The output is the real computed selection; without `--enforce`, audit mode only
+means that CI continues to run the full matrix while reporting what would have
+been selected.
+
 ## Two layers
 
 Selective CI is split by **who can know a dependency**:
@@ -47,7 +63,7 @@ paths.
 | `conventions` | `<name>`-capture pattern → target template, emitted only if the derived test exists (existence guard). Additive. Covers a test's own folder and the Hosting/Components integration dirs as a backstop for non-MSBuild files the graph cannot attribute. |
 | `ignore` | globs Layer 2 accounts for with **no** target, so they do not trip the run-all fallback. Link-compiled `src/Shared` / `tests/Shared` / `Components/Common` files are attributed by Layer 1; the curated entries cover only paths that still need an explicit exemption. See [test-trigger-selector-design.md](./test-trigger-selector-design.md) §Layer 2. |
 | `path_rules` | a path glob set → a target set (`test:` / `job:` / a group / `ALL`). The single general path matcher: catch-all-to-`ALL`, convention misses, non-.NET job loose-file triggers, and loose-file reads all live here under comment headers |
-| `affected_project_rules` | an affected **non-matrix** project, matched by project-name glob against Layer 1's affected set, → a target set. Matrix test projects are excluded because Layer 1 already selects them directly; non-matrix support projects can still match broad globs. Follows the graph's transitive closure |
+| `affected_project_rules` | an affected **production/non-test** project, matched by project-name glob against Layer 1's affected set, → a target set. Every project under `tests/` is excluded because test projects are selected through the Layer 1 intersection or explicit test rules. Follows the graph's transitive closure |
 | `derived_targets` | "if any of these tests is selected, also run these jobs/tests" — a *test-set* relationship, not a file edge |
 | `groups` | named, reusable bundles of `test:`/`job:` targets that expand recursively |
 
@@ -77,7 +93,9 @@ The map stays small by keeping each dependency in the layer that can prove it:
 | `job:homebrew-installer` | `tests.yml` `prepare_homebrew_installer_artifacts` |
 | `job:nix-package` | `tests.yml` `nix_package` |
 | `job:cli-starter-validation` | `tests.yml` `cli_starter_validation_{linux,windows,macos}_{x64,arm64}` → [`cli-starter-validation.yml`](../../.github/workflows/cli-starter-validation.yml) |
+| `job:native-dashboard-validation` | `tests.yml` `native_dashboard_validation_{linux,windows,macos}_{x64,arm64}` → [`native-dashboard-validation.yml`](../../.github/workflows/native-dashboard-validation.yml) |
 | `job:deployment-e2e` | [`deployment-tests.yml`](../../.github/workflows/deployment-tests.yml) — *schedule/dispatch-only today* |
+| `DOTNET_TESTS` | every .NET test project in the PR `run-tests.yml` matrix, without non-.NET PR-gated jobs |
 | `ALL` | every selector target; PR CI runs the full PR test matrix and all PR-gated jobs, while independently scheduled, dispatched, or outerloop targets remain advisory |
 | `<GROUP_NAME>` | a named group (see `groups:`) expanding **recursively** to its `test:`/`job:` members |
 
@@ -123,16 +141,32 @@ dirs with no same-named test produce nothing here. They fall through to
 
 ### Catch-all → `ALL`
 
-A single `path_rules` entry whose target is `ALL`. Build infrastructure and
-broadly shared code re-run everything. Examples:
+Categorized `path_rules` entries whose target is `ALL`. Build infrastructure and
+broadly shared code re-run everything; keep the entries grouped by the reason the
+input affects the whole regular PR-CI test matrix. Examples:
 
 ```text
-global.json, NuGet.config, .config/dotnet-tools.json
-Directory.Build.*, Directory.Packages.props, Aspire.slnx
-eng/*.props, eng/*.targets, eng/common/**, eng/OuterPreBuild.proj
+global.json, NuGet.config
+Directory.Build.*, Directory.Packages.props
+eng/Build.props, eng/Testing.props, eng/Versions.props, eng/*.targets
+eng/common/**, eng/OuterPreBuild.proj
 tests/Shared/**/*.props, tests/Shared/**/*.targets, tests/Shared/Dockerfile*
-.github/workflows/tests.yml, run-tests.yml, build-packages.yml, ...
+.github/workflows/tests.yml, run-tests.yml, ...
 ```
+
+Some regular PR-CI infrastructure is narrower than `ALL`:
+
+```text
+.github/actions/enumerate-tests/**      -> DOTNET_TESTS
+.github/actions/check-changed-files/**  -> test:Infrastructure.Tests
+.github/actions/select-tests/**         -> test:Infrastructure.Tests
+.github/actions/setup-deno/**           -> test:Aspire.Hosting.JavaScript.Tests + job:extension-e2e
+```
+
+`enumerate-tests` only enumerates the managed .NET test-project matrix, so it
+does not select extension, polyglot, installer, or other non-.NET PR-gated jobs.
+When a local action has a broader or unclear blast radius, keep it conservative
+with `ALL`.
 
 `Directory.Packages.props` is intentionally here. Layer 1 uses a HEAD-only graph
 and does not attempt two-commit central-package diffing, so central package
@@ -171,12 +205,13 @@ Highlights:
   `src/Aspire.Hosting.Integration.Analyzers/**` →
   `test:Aspire.Hosting.Analyzers.Tests`.
 - **non-.NET job loose triggers** — only the paths the project graph cannot
-  attribute, such as `tests/PolyglotAppHosts/**`, checked-in `*.ats.txt` /
+  attribute, such as `tests/PolyglotAppHosts/**`, checked-in
   `*.tscompat.suppression.txt` baselines, `tools/TypeScriptApiCompat/**`, and
-  `extension/**`. A `src/Aspire.Hosting*/api/*.ats.txt` baseline fans out to
-  **both** `job:typescript-api-compat` (baseline diff) and `job:polyglot`,
-  because the polyglot playground regenerates and compiles that exported surface
-  in every language.
+ `extension/**`. Checked-in `*.ats.txt` baselines under the project `api/`
+ directories are
+ generated artifacts dropped by the prefilter (see below) when they are the
+ only changed files, so no dedicated rule routes them here. Hosting integration
+ projects with polyglot fixtures are listed in `affected_project_rules`.
 - **loose-file deps** — `eng/clipack/**`, `eng/dashboardpack/**`,
   `eng/dcppack/**`, `eng/winget/**`, `eng/homebrew/**`,
   `src/Aspire.ProjectTemplates/**`, `playground/**`, `.github/workflows/**`,
@@ -193,13 +228,15 @@ Highlights:
 
 ### Project rules (`affected_project_rules`)
 
-An affected **non-matrix** project → a target set, matched by project-**name**
-glob against Layer 1's affected set. Matrix test projects are handled by the
-Layer 1 intersection and excluded here. Non-matrix test-support projects can
-still match broad globs. Narrow those matches for expensive or class-sharded
-gated targets; broader no-miss matching can be appropriate for smaller
-unsharded jobs when maintaining an exhaustive allowlist would be more fragile
-than the harmless over-selection.
+An affected **production/non-test** project → a target set, matched by
+project-**name** glob against Layer 1's affected set. Every project under
+`tests/`, including non-matrix fixtures and support projects, is excluded here.
+Test projects are selected through the Layer 1 intersection or explicit test
+rules; these rules describe dependencies from production projects to additional
+selector-gated jobs. Narrow those matches for expensive or class-sharded gated
+targets; broader no-miss matching can be appropriate for smaller unsharded jobs
+when maintaining an exhaustive allowlist would be more fragile than harmless
+over-selection.
 
 This is keyed by project identity rather than literal project-path
 globs, so it follows the graph's transitive closure and survives project
@@ -207,6 +244,15 @@ directory moves. It is additive and inert when Layer 1 is explicitly skipped
 with `--skip-layer1`; the loose-file `path_rules` still cover those triggers.
 
 Project name means the `.csproj` base name, which is what Layer 1 emits.
+
+The opt-in `Aspire.Hosting.Azure.Provisioning*` packages and their source
+generator route to `job:polyglot`. The per-language AppHost fixtures load these
+packages through `aspire.config.json`, so their SDK validation is not expressed
+by the .NET project graph.
+
+Hosting packages used by those fixtures also need routing entries even when
+they have no dedicated fixture directory. For example, `Aspire.Hosting.Azure.FrontDoor`
+is consumed by the base Azure fixtures alongside the CDN provisioning proxy.
 
 ```yaml
 - projects: [Aspire.Hosting*, Aspire.Cli]
@@ -313,7 +359,7 @@ it.
      target to schedule; record why in the adjacent YAML comment;
    - add a top-level skip pattern only when the path cannot affect main CI, or a
      dedicated workflow fully validates it; preserve any `keep_routed` carve-out;
-   - use `affected_project_rules` only when an affected non-matrix project
+   - use `affected_project_rules` only when an affected production/non-test project
      implies work beyond the graph-selected tests, and `derived_targets` only
      when selecting one test inherently requires another target;
    - keep `reason` to a short description of what the rule covers or why the
