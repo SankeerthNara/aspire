@@ -699,6 +699,32 @@ public class AgentInitCommandTests(ITestOutputHelper outputHelper)
     }
 
     [Fact]
+    public async Task AgentInitCommand_GlobalScope_NamesSharedHook_WhenCopilotAppAndCliAreDetected()
+    {
+        using var workspace = TemporaryWorkspace.CreateForCli(outputHelper);
+        var homeDirectory = workspace.CreateDirectory("fake-home");
+        var interactionService = new TestInteractionService();
+        var services = CliTestHelper.CreateServiceCollection(workspace, outputHelper, options =>
+        {
+            options.CliExecutionContextFactory = _ => CreateExecutionContext(workspace.WorkspaceRoot, homeDirectory);
+            options.AgentEnvironmentDetectorFactory = _ => new TestAgentEnvironmentDetector
+            {
+                DetectedEnvironments = AgentEnvironment.CopilotApp | AgentEnvironment.CopilotCli
+            };
+            options.InteractionServiceFactory = _ => interactionService;
+        });
+
+        using var provider = services.BuildServiceProvider();
+        var command = provider.GetRequiredService<RootCommand>();
+        var result = command.Parse($"agent init --workspace-root {workspace.WorkspaceRoot.FullName} --agents copilot --scope global --skills aspire");
+
+        Assert.Equal(CliExitCodes.Success, await result.InvokeAsync().DefaultTimeout());
+        Assert.Contains(
+            interactionService.DisplayedMessages,
+            message => message.Message.Contains("telemetry hooks for: GitHub Copilot App and CLI.", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task AgentInitCommand_DoesNotFail_WhenTelemetryHookConfigurationThrows()
     {
         // Hook installation is best-effort transparency tooling. A non-IO failure such as a missing

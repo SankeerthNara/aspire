@@ -104,13 +104,8 @@ internal sealed class CopilotAgentClient(
         AgentEnvironment detectedEnvironments, CancellationToken cancellationToken)
     {
         var targetEnvironment = detectedEnvironments & (AgentEnvironment.CopilotApp | AgentEnvironment.CopilotCli);
-        // App and CLI share one user hook. Prefer the App display name when both are detected.
-        // Canonical scripts still attribute App events to copilot-cli:
-        // https://github.com/microsoft/aspire-skills/issues/71.
-        if (targetEnvironment.HasFlag(AgentEnvironment.CopilotApp))
-        {
-            targetEnvironment = AgentEnvironment.CopilotApp;
-        }
+        // App and CLI share one user hook, so report both when both are detected and let the
+        // caller name the shared hook.
         if (targetEnvironment == AgentEnvironment.None)
         {
             return new TelemetryHookConfigurationResult(AgentEnvironment.None, []);

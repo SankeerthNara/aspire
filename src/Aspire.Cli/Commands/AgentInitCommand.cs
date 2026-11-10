@@ -737,9 +737,19 @@ internal sealed class AgentInitCommand : BaseCommand
 
         if (result.ConfiguredEnvironments != AgentEnvironment.None)
         {
-            var environmentNames = string.Join(", ", Enum.GetValues<AgentEnvironment>()
-                .Where(environment => environment != AgentEnvironment.None && result.ConfiguredEnvironments.HasFlag(environment))
+            // The App and CLI share one hook, so name them together instead of listing each.
+            const AgentEnvironment SharedCopilot = AgentEnvironment.CopilotApp | AgentEnvironment.CopilotCli;
+            var remaining = result.ConfiguredEnvironments;
+            var names = new List<string>();
+            if (remaining.HasFlag(SharedCopilot))
+            {
+                names.Add(GetEnvironmentDisplayName(SharedCopilot));
+                remaining &= ~SharedCopilot;
+            }
+            names.AddRange(Enum.GetValues<AgentEnvironment>()
+                .Where(environment => environment != AgentEnvironment.None && remaining.HasFlag(environment))
                 .Select(GetEnvironmentDisplayName));
+            var environmentNames = string.Join(", ", names);
             InteractionService.DisplayMessage(
                 KnownEmojis.BarChart,
                 string.Format(CultureInfo.CurrentCulture, AgentCommandStrings.InitCommand_TelemetryHooksInstalled, environmentNames));
@@ -766,6 +776,7 @@ internal sealed class AgentInitCommand : BaseCommand
         {
             AgentEnvironment.CopilotCli => "GitHub Copilot CLI",
             AgentEnvironment.CopilotApp => "GitHub Copilot App",
+            AgentEnvironment.CopilotApp | AgentEnvironment.CopilotCli => "GitHub Copilot App and CLI",
             AgentEnvironment.ClaudeCode => "Claude Code",
             AgentEnvironment.VsCode => "VS Code",
             AgentEnvironment.OpenCode => "OpenCode",
